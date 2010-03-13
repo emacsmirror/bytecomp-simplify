@@ -3,7 +3,7 @@
 ;; Copyright 2009, 2010 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42@zip.com.au>
-;; Version: 4
+;; Version: 5
 ;; Keywords: extensions
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
@@ -86,10 +86,15 @@
 ;; Version 3 - new up-list,down-list, char-before,char-after
 ;;           - fixes for emacs21
 ;; Version 4 - undo defadvice on unload-feature
+;; Version 5 - express dependency on 'advice
 
 ;;; Code:
 
 ;;;###autoload (eval-after-load "bytecomp" '(require 'bytecomp-simplify))
+
+;; for `ad-find-advice' macro when running uncompiled
+;; (don't unload 'advice before our -unload-function)
+(require 'advice)
 
 
 ;;-----------------------------------------------------------------------------
