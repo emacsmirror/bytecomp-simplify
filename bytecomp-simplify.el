@@ -3,7 +3,7 @@
 ;; Copyright 2009, 2010 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42@zip.com.au>
-;; Version: 5
+;; Version: 6
 ;; Keywords: extensions
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
@@ -31,17 +31,20 @@
 ;;
 ;;     char-before          \ (point) argument can be omitted
 ;;     char-after           /
-;;     up-list              \ count==1 can be omitted in Emacs 21 up
-;;     down-list            /
-;;     delete-windows-on    current-buffer can be omitted in Emacs 23 up
-;;     kill-buffer          current-buffer can be nil, or omitted in Emacs 23
-;;
+;;     delete-windows-on    current-buffer can be omitted for Emacs 23 up
+;;     eq nil               can be `null'
+;;     kill-buffer          current-buffer can be nil, or omitted for Emacs 23
+;;     lisp-indent-function can be `declare' in macro for Emacs 23 up
+;;     princ "\n"           can be terpri
 ;;     re-search-forward    \ constant pattern can be plain search-forward
 ;;     re-search-backward   /   or search-backward
 ;;     search-forward       \
 ;;     search-backward      | (point-min) or (point-max) limit can be nil
 ;;     re-search-forward    |
 ;;     re-search-backward   /
+;;     up-list              \ count==1 can be omitted for Emacs 21 up
+;;     down-list            /
+;;
 ;;
 ;; Things like `delete-windows-on' which are version-dependent are reported
 ;; only when the Emacs in use allows the simplification.  So
@@ -50,7 +53,9 @@
 ;;
 ;; The version-dependent bits might have scope for a kind of reverse check,
 ;; warning about a feature newer than a specified target Emacs supports.
-;; Except conditionalized code would trigger it far too often.
+;; Except conditionalized code would trigger it far too often.  There might
+;; also be scope to declare a target Emacs version level, so as not to warn
+;; about simplifications only possible in newer Emacs.
 ;;
 ;; Checks not done:
 ;;
@@ -87,6 +92,7 @@
 ;;           - fixes for emacs21
 ;; Version 4 - undo defadvice on unload-feature
 ;; Version 5 - express dependency on 'advice
+;; Version 6 - new eq nil, princ "\n", put 'lisp-indent-function
 
 ;;; Code:
 
@@ -96,6 +102,18 @@
 ;; (don't unload 'advice before our -unload-function)
 (require 'advice)
 
+(autoload 'apropos-macrop "apropos")
+
+;;-----------------------------------------------------------------------------
+;; generic
+
+(defun bytecomp-simplify-quoted-symbol (obj)
+  "If OBJ is a list `(quote symbol)' return symbol, otherwise nil."
+  (and (consp obj)
+       (equal 2 (safe-length obj))
+       (eq 'quote (car obj))
+       (symbolp (cadr obj))
+       (cadr obj)))
 
 ;;-----------------------------------------------------------------------------
 ;; `simplify' warnings type
@@ -130,6 +148,7 @@
 ;;-----------------------------------------------------------------------------
 
 (defun bytecomp-simplify-warning-enabled-p ()
+  "Return non-nil if simplify warnings are enabled in `byte-compile-warnings'."
   (cond ((eval-when-compile (fboundp 'byte-compile-warning-enabled-p))
          (byte-compile-warning-enabled-p 'simplify))
 
@@ -152,6 +171,9 @@ argument expressions."
         (let ((handler (get fn 'bytecomp-simplify-warn)))
           ;; func or list of functions
           (run-hook-with-args 'handler fn form))))))
+
+;;-----------------------------------------------------------------------------
+;; nasty hook-ins to bytecomp.el
 
 ;; Is it better to look at `byte-compile-form', or after macro expansions in
 ;; `byte-compile-normal-call'?  Macros might produce naive code with
@@ -184,11 +206,27 @@ argument expressions."
   ;; (message "zero-one-extra simplify: %S" form)
   (bytecomp-simplify-warn form))
 
+;; for `eq'
+(defadvice byte-compile-two-args (before bytecomp-simplify activate)
+  "Notice simplifications."
+  ;; (message "two-args simplify: %S" form)
+  (bytecomp-simplify-warn form))
+
+;; for `eq' in xemacs21
+(defadvice byte-compile-two-args-19->20 (before bytecomp-simplify activate)
+  "Notice simplifications."
+  ;; (message "two-args-19->20 simplify: %S" form)
+  (bytecomp-simplify-warn form))
+
 (defun bytecomp-simplify-unload-function ()
+  "Remove defadvices."
   (dolist (func '(byte-compile-normal-call
+                  byte-compile-defmacro
                   byte-compile-char-before
                   byte-compile-zero-or-one-arg
                   byte-compile-zero-or-one-arg-with-one-extra
+                  byte-compile-two-args
+                  byte-compile-two-args-19->20
                   byte-optimize-char-before))
     (when (ad-find-advice func 'before 'bytecomp-simplify)
       (ad-remove-advice   func 'before 'bytecomp-simplify)
@@ -237,6 +275,23 @@ argument expressions."
 
 
 ;;-----------------------------------------------------------------------------
+;; eq, equal, eql
+
+(defun bytecomp-simplify-eq-nil (fn form)
+  "`(eq nil X)' can be `(null X)'."
+  (when (memq nil form)
+    (byte-compile-warn "`(%S nil X)' can be simplified to `(null X)'" fn)))
+  
+(put 'eq    'bytecomp-simplify-warn 'bytecomp-simplify-eq-nil)
+(put 'eql   'bytecomp-simplify-warn 'bytecomp-simplify-eq-nil)
+(put 'equal 'bytecomp-simplify-warn 'bytecomp-simplify-eq-nil)
+(put 'equal-including-properties
+     'bytecomp-simplify-warn 'bytecomp-simplify-eq-nil)
+;; 'cl
+(put 'equalp 'bytecomp-simplify-warn 'bytecomp-simplify-eq-nil)
+
+
+;;-----------------------------------------------------------------------------
 ;; kill-buffer
 
 (defconst bytecomp-simplify-kill-buffer--optarg
@@ -264,10 +319,68 @@ argument expressions."
 
 
 ;;-----------------------------------------------------------------------------
+;; princ
+
+(put 'princ 'bytecomp-simplify-warn
+     (lambda (fn form)
+       (when (equal (cadr form) "\n")
+         (byte-compile-warn "`princ \"\\n\"' can be simplified to `terpri'"))))
+
+
+;;-----------------------------------------------------------------------------
+;; put
+;;
+;; Believe `(declare (indent N))' within a macro is a simplification in that
+;; it's easier if renaming or cutting and pasting, though it makes no
+;; difference to how the code comes out.
+
+(defconst bytecomp-simplify-put--declare-indent-p
+  (condition-case nil
+      (progn
+        (eval '(defmacro bytecomp-simplify-put--declare-indent-p--test
+                 (foo &rest body)
+                 (declare (indent 1))
+                 nil))
+        (bytecomp-simplify-put--declare-indent-p--test 123)
+        (equal 1 (get 'bytecomp-simplify-put--declare-indent-p--test
+                      'lisp-indent-function)))
+    (error nil))
+  "Non-nil if `(declare (indent N))' can be used in this Emacs.")
+
+(defvar bytecomp-simplify-put--pending-indents nil
+  "List of as-yet unknown symbols with 'lisp-indent-function.")
+
+(put 'put 'bytecomp-simplify-warn
+     (lambda (fn form)
+       (when (and bytecomp-simplify-put--declare-indent-p
+                  (equal 4 (safe-length form))
+                  (equal '(quote lisp-indent-function) (nth 2 form))
+                  (setq fn (bytecomp-simplify-quoted-symbol (nth 1 form))))
+         (if (not (fboundp fn))
+             (add-to-list 'bytecomp-simplify-put--pending-indents fn)
+
+           ;; `declare' only for macros, not functions
+           (if (apropos-macrop fn)
+               (bytecomp-simplify-put-warn-indent fn))))))
+
+(defadvice byte-compile-defmacro (before bytecomp-simplify activate)
+  "Check for previous encountered (put 'lisp-indent-function)."
+  (let ((name (cadr form))) ;; macro name
+    (when (and bytecomp-simplify-put--declare-indent-p
+               (memq name bytecomp-simplify-put--pending-indents))
+      (setq bytecomp-simplify-put--pending-indents
+            (remove name bytecomp-simplify-put--pending-indents))
+      (bytecomp-simplify-put-warn-indent name))))
+
+(defun bytecomp-simplify-put-warn-indent (symbol)
+  (byte-compile-warn "(put '%S 'lisp-indent-function) can be simplified to `(declare (indent N))' in the macro, for Emacs 23 up" symbol))
+
+;;-----------------------------------------------------------------------------
 ;; search-forward
 ;; search-backward
 
 (defun bytecomp-simplify-search-limit (fn form)
+  "Search limit `point-min' or `point-max' can be nil."
   (let ((default (if (string-match "forward" (symbol-name fn))
                      '(point-max)
                    '(point-min))))
@@ -301,6 +414,7 @@ specials in the future."
                 regexp))
 
 (defun bytecomp-simplify-re-search-fixed (fn form)
+  "Fixed string `re-search-' can be plain `search-'."
   (when (and (stringp (nth 1 form))
              (bytecomp-simplify-regexp-fixed-p (nth 1 form)))
     (byte-compile-warn
@@ -329,6 +443,7 @@ specials in the future."
   "Non-nil if `up-list' and `down-list' count arg is optional in this Emacs.")
 
 (defun bytecomp-simplify-updown-list (fn form)
+  "`(up-list 1)' arg can be ommited as `(up-list)', in Emacs 21 up."
   (when (and bytecomp-simplify-updown-list--optarg
              (equal (cdr form) '(1)))
     (byte-compile-warn "`%S' can be simplified to `(%S)', for Emacs 21 up"
