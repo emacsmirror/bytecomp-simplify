@@ -3,7 +3,7 @@
 ;; Copyright 2009, 2010 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42@zip.com.au>
-;; Version: 7
+;; Version: 8
 ;; Keywords: extensions
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
@@ -95,6 +95,7 @@
 ;; Version 5 - express dependency on 'advice
 ;; Version 6 - new eq nil, princ "\n", put 'lisp-indent-function
 ;; Version 7 - new equal 'symbol
+;; Version 8 - avoid stray "unresolved put-warn-indent" in emacs21
 
 ;;; Code:
 
@@ -104,7 +105,8 @@
 ;; (don't unload 'advice before our -unload-function)
 (require 'advice)
 
-(autoload 'apropos-macrop "apropos")
+;; for apropos-macrop
+(require 'apropos)
 
 
 ;;-----------------------------------------------------------------------------
@@ -356,20 +358,27 @@ argument expressions."
 ;; difference to how the code comes out.
 
 (defconst bytecomp-simplify-put--declare-indent-p
-  (condition-case nil
-      (progn
-        (eval '(defmacro bytecomp-simplify-put--declare-indent-p--test
-                 (foo &rest body)
-                 (declare (indent 1))
-                 nil))
-        (bytecomp-simplify-put--declare-indent-p--test 123)
-        (equal 1 (get 'bytecomp-simplify-put--declare-indent-p--test
-                      'lisp-indent-function)))
-    (error nil))
+  (progn
+    (condition-case nil
+        (progn
+          (eval '(defmacro bytecomp-simplify-put--declare-indent-p--test
+                   (foo &rest body)
+                   (declare (indent 1))
+                   nil))
+          (bytecomp-simplify-put--declare-indent-p--test 123)
+          (equal 1 (get 'bytecomp-simplify-put--declare-indent-p--test
+                        'lisp-indent-function)))
+      (error nil))
+    (fmakunbound 'bytecomp-simplify-put--declare-indent-p--test))
   "Non-nil if `(declare (indent N))' can be used in this Emacs.")
 
 (defvar bytecomp-simplify-put--pending-indents nil
   "List of as-yet unknown symbols with (put 'lisp-indent-function).")
+
+(defun bytecomp-simplify-put-warn-indent (symbol)
+  (setq bytecomp-simplify-put--pending-indents
+        (remove symbol bytecomp-simplify-put--pending-indents))
+  (byte-compile-warn "(put '%S 'lisp-indent-function) can be simplified to `(declare (indent N))' in the macro, for Emacs 23 up" symbol))
 
 (put 'put 'bytecomp-simplify-warn
      (lambda (fn form)
@@ -390,11 +399,6 @@ argument expressions."
     (let ((symbol (cadr form))) ;; macro name
       (when (memq symbol bytecomp-simplify-put--pending-indents)
         (bytecomp-simplify-put-warn-indent symbol)))))
-
-(defun bytecomp-simplify-put-warn-indent (symbol)
-  (setq bytecomp-simplify-put--pending-indents
-        (remove symbol bytecomp-simplify-put--pending-indents))
-  (byte-compile-warn "(put '%S 'lisp-indent-function) can be simplified to `(declare (indent N))' in the macro, for Emacs 23 up" symbol))
 
 
 ;;-----------------------------------------------------------------------------
