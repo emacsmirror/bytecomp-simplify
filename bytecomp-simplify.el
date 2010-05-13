@@ -3,7 +3,7 @@
 ;; Copyright 2009, 2010 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42@zip.com.au>
-;; Version: 8
+;; Version: 9
 ;; Keywords: extensions
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
@@ -29,8 +29,9 @@
 ;;
 ;; The reports include
 ;;
-;;     char-before          \ (point) argument can be omitted
-;;     char-after           /
+;;     char-before          \
+;;     char-after           | (point) argument can be omitted
+;;     push-mark            /
 ;;     delete-windows-on    current-buffer can be omitted for Emacs 23 up
 ;;     eq nil               can be `null'
 ;;     equal 'sym           can be eq
@@ -96,6 +97,7 @@
 ;; Version 6 - new eq nil, princ "\n", put 'lisp-indent-function
 ;; Version 7 - new equal 'symbol
 ;; Version 8 - avoid stray "unresolved put-warn-indent" in emacs21
+;; Version 9 - new push-mark (point)
 
 ;;; Code:
 
@@ -247,18 +249,19 @@ argument expressions."
 
       
 ;;-----------------------------------------------------------------------------
-;; char-before, char-after
+;; char-before, char-after, push-mark
 
 ;; APEL poe.el has a bit for mule emacs19 or something when the POS argument
 ;; to char-before and char-after was mandatory.  Don't think need to worry
 ;; about that.
 
-(defun bytecomp-simplify-char-beforeafter (fn form)
+(defun bytecomp-simplify-char-defaultpoint (fn form)
   (when (equal (cdr form) '((point)))
     (byte-compile-warn "`%S' can be simplified to `(%S)'" form fn)))
 
-(put 'char-before 'bytecomp-simplify-warn 'bytecomp-simplify-char-beforeafter)
-(put 'char-after  'bytecomp-simplify-warn 'bytecomp-simplify-char-beforeafter)
+(put 'char-before 'bytecomp-simplify-warn 'bytecomp-simplify-char-defaultpoint)
+(put 'char-after  'bytecomp-simplify-warn 'bytecomp-simplify-char-defaultpoint)
+(put 'push-mark   'bytecomp-simplify-warn 'bytecomp-simplify-char-defaultpoint)
 
 ;; in emacs21 and xemacs21 `char-before' is byte-optimized to `char-after'
 ;; before it reaches `byte-compile-form' etc, so catch it before that
