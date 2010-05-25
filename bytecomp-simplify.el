@@ -3,7 +3,7 @@
 ;; Copyright 2009, 2010 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42@zip.com.au>
-;; Version: 9
+;; Version: 10
 ;; Keywords: extensions
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
@@ -98,6 +98,7 @@
 ;; Version 7 - new equal 'symbol
 ;; Version 8 - avoid stray "unresolved put-warn-indent" in emacs21
 ;; Version 9 - new push-mark (point)
+;; Version 10 - fix check of "declare indent" availability
 
 ;;; Code:
 
@@ -361,18 +362,18 @@ argument expressions."
 ;; difference to how the code comes out.
 
 (defconst bytecomp-simplify-put--declare-indent-p
-  (progn
-    (condition-case nil
-        (progn
-          (eval '(defmacro bytecomp-simplify-put--declare-indent-p--test
-                   (foo &rest body)
-                   (declare (indent 1))
-                   nil))
-          (bytecomp-simplify-put--declare-indent-p--test 123)
-          (equal 1 (get 'bytecomp-simplify-put--declare-indent-p--test
-                        'lisp-indent-function)))
-      (error nil))
-    (fmakunbound 'bytecomp-simplify-put--declare-indent-p--test))
+  (condition-case nil
+      (eval
+       '(progn
+          (defmacro bytecomp-simplify-put--declare-indent-p--test
+            (foo &rest body)
+            (declare (indent 1))
+            nil)
+          (prog1
+              (equal 1 (get 'bytecomp-simplify-put--declare-indent-p--test
+                            'lisp-indent-function))
+            (fmakunbound 'bytecomp-simplify-put--declare-indent-p--test))))
+    (error nil))
   "Non-nil if `(declare (indent N))' can be used in this Emacs.")
 
 (defvar bytecomp-simplify-put--pending-indents nil
