@@ -3,7 +3,7 @@
 ;; Copyright 2009, 2010 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42@zip.com.au>
-;; Version: 10
+;; Version: 11
 ;; Keywords: extensions
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
@@ -30,18 +30,18 @@
 ;; The reports include
 ;;
 ;;     char-before          \
-;;     char-after           | (point) argument can be omitted
+;;     char-after           | argument `point' can be omitted
 ;;     push-mark            /
-;;     delete-windows-on    current-buffer can be omitted for Emacs 23 up
+;;     delete-windows-on    `current-buffer' can be omitted for Emacs 23 up
 ;;     eq nil               can be `null'
-;;     equal 'sym           can be eq
-;;     kill-buffer          current-buffer can be nil, or omitted for Emacs 23
-;;     lisp-indent-function can be `declare' in macro for Emacs 23 up
-;;     princ "\n"           can be terpri
-;;     re-search-forward    \ constant pattern can be plain search-forward
-;;     re-search-backward   /   or search-backward
+;;     equal 'sym           can be `eq'
+;;     kill-buffer          `current-buffer' can be nil or omitted for Emacs 23
+;;     lisp-indent-function can be `declare' within macro for Emacs 23 up
+;;     princ "\n"           can be `terpri'
+;;     re-search-forward    \ constant pattern can be plain `search-forward'
+;;     re-search-backward   /   or `search-backward'
 ;;     search-forward       \
-;;     search-backward      | (point-min) or (point-max) limit can be nil
+;;     search-backward      | `point-min' or `point-max' limit can be nil
 ;;     re-search-forward    |
 ;;     re-search-backward   /
 ;;     up-list              \ count==1 can be omitted for Emacs 21 up
@@ -99,6 +99,7 @@
 ;; Version 8 - avoid stray "unresolved put-warn-indent" in emacs21
 ;; Version 9 - new push-mark (point)
 ;; Version 10 - fix check of "declare indent" availability
+;; Version 11 - in fixed-match warning show the regexp
 
 ;;; Code:
 
@@ -116,7 +117,7 @@
 ;; generic
 
 (defun bytecomp-simplify-quoted-symbol (obj)
-  "If OBJ is a list `(quote symbol)' return symbol, otherwise nil."
+  "If OBJ is a list `(quote SYMBOL)' return SYMBOL, otherwise nil."
   (and (consp obj)
        (equal 2 (safe-length obj))
        (eq 'quote (car obj))
@@ -257,6 +258,8 @@ argument expressions."
 ;; about that.
 
 (defun bytecomp-simplify-char-defaultpoint (fn form)
+  ;; checkdoc-params: (fn form)
+  "`(point)' argument can be omitted."
   (when (equal (cdr form) '((point)))
     (byte-compile-warn "`%S' can be simplified to `(%S)'" form fn)))
 
@@ -295,11 +298,13 @@ argument expressions."
 ;; eq, equal, eql
 
 (defun bytecomp-simplify-eq (fn form)
+  ;; checkdoc-params: (fn form)
   "`(eq nil X)' can be `(null X)'."
   (when (memq nil form)
     (byte-compile-warn "`(%S nil X)' can be simplified to `(null X)'" fn)))
 
 (defun bytecomp-simplify-equal (fn form)
+  ;; checkdoc-params: (fn form)
   "`(equal 'foo X)' can be `(eq 'foo X)'."
   (bytecomp-simplify-eq fn form)
 
@@ -380,6 +385,7 @@ argument expressions."
   "List of as-yet unknown symbols with (put 'lisp-indent-function).")
 
 (defun bytecomp-simplify-put-warn-indent (symbol)
+  "Report lisp-indent-function on SYMBOL can be `declare' instead."
   (setq bytecomp-simplify-put--pending-indents
         (remove symbol bytecomp-simplify-put--pending-indents))
   (byte-compile-warn "(put '%S 'lisp-indent-function) can be simplified to `(declare (indent N))' in the macro, for Emacs 23 up" symbol))
@@ -410,6 +416,7 @@ argument expressions."
 ;; search-backward
 
 (defun bytecomp-simplify-search-limit (fn form)
+  ;; checkdoc-params: (fn form)
   "Search limit `point-min' or `point-max' can be nil."
   (let ((default (if (string-match "forward" (symbol-name fn))
                      '(point-max)
@@ -444,12 +451,16 @@ specials in the future."
                 regexp))
 
 (defun bytecomp-simplify-re-search-fixed (fn form)
+  ;; checkdoc-params: (fn form)
   "Fixed string `re-search-' can be plain `search-'."
   (when (and (stringp (nth 1 form))
              (bytecomp-simplify-regexp-fixed-p (nth 1 form)))
     (byte-compile-warn
-     "`%S' with fixed-string regexp can be simplified to `%s'"
-     fn (substring (symbol-name fn) 3))))
+     "`%S' with fixed-string regexp %s can be simplified to `%s'"
+     fn
+     (let ((print-escape-newlines t))
+       (prin1-to-string (nth 1 form)))
+     (substring (symbol-name fn) 3))))
 
 (put 're-search-forward 'bytecomp-simplify-warn
      '(bytecomp-simplify-re-search-fixed
@@ -473,7 +484,8 @@ specials in the future."
   "Non-nil if `up-list' and `down-list' count arg is optional in this Emacs.")
 
 (defun bytecomp-simplify-updown-list (fn form)
-  "`(up-list 1)' arg can be ommited as `(up-list)', in Emacs 21 up."
+  ;; checkdoc-params: (fn form)
+  "`(up-list 1)' arg can be omitted as `(up-list)', in Emacs 21 up."
   (when (and bytecomp-simplify-updown-list--optarg
              (equal (cdr form) '(1)))
     (byte-compile-warn "`%S' can be simplified to `(%S)', for Emacs 21 up"
@@ -484,6 +496,8 @@ specials in the future."
 
 
 ;;-----------------------------------------------------------------------------
+
+;; LocalWords: conditionalized spam defadvices alphabeticals
 
 (provide 'bytecomp-simplify)
 
