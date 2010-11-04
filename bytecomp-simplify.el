@@ -3,7 +3,7 @@
 ;; Copyright 2009, 2010 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42@zip.com.au>
-;; Version: 11
+;; Version: 12
 ;; Keywords: extensions
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
@@ -100,6 +100,7 @@
 ;; Version 9 - new push-mark (point)
 ;; Version 10 - fix check of "declare indent" availability
 ;; Version 11 - in fixed-match warning show the regexp
+;; Version 12 - fix for put 'lisp-indent-function on unevaluated toplevels
 
 ;;; Code:
 
@@ -157,18 +158,21 @@
 
 ;;-----------------------------------------------------------------------------
 
-(defun bytecomp-simplify-warning-enabled-p ()
+(defun bytecomp-simplify-warning-enabled-p (&optional warning-type)
   "Return non-nil if simplify warnings are enabled in `byte-compile-warnings'."
+  (unless warning-type
+    (setq warning-type 'simplify))
   (cond ((eval-when-compile (fboundp 'byte-compile-warning-enabled-p))
-         (byte-compile-warning-enabled-p 'simplify))
+         ;; emacs22 up
+         (byte-compile-warning-enabled-p warning-type))
 
         ;; emacs21 doesn't have `byte-compile-warning-enabled-p'
         ((eq t byte-compile-warnings)
          t)
         ((eq 'not (car byte-compile-warnings))
-         (not (memq 'simplify (cdr byte-compile-warnings))))
+         (not (memq warning-type (cdr byte-compile-warnings))))
         (t
-         (memq 'simplify byte-compile-warnings))))
+         (memq warning-type byte-compile-warnings))))
 
 (defun bytecomp-simplify-warn (form)
   "Warn about possible code simplifications in FORM.
@@ -242,6 +246,8 @@ argument expressions."
                   byte-compile-zero-or-one-arg-with-one-extra
                   byte-compile-two-args
                   byte-compile-two-args-19->20
+                  byte-compile-defmacro
+                  byte-compile-file-form-defmacro
                   byte-optimize-char-before
                   compiler-macroexpand))
     (when (ad-find-advice func 'before 'bytecomp-simplify)
@@ -383,6 +389,8 @@ argument expressions."
 
 (defvar bytecomp-simplify-put--pending-indents nil
   "List of as-yet unknown symbols with (put 'lisp-indent-function).")
+(defvar bytecomp-simplify-put--known-macros nil
+  "List of defmacro defined symbols.")
 
 (defun bytecomp-simplify-put-warn-indent (symbol)
   "Report lisp-indent-function on SYMBOL can be `declare' instead."
@@ -396,19 +404,34 @@ argument expressions."
                   (equal 4 (safe-length form))
                   (equal '(quote lisp-indent-function) (nth 2 form))
                   (setq fn (bytecomp-simplify-quoted-symbol (nth 1 form))))
-         (if (not (fboundp fn))
-             (add-to-list 'bytecomp-simplify-put--pending-indents fn)
+         ;; `byte-compile-macro-environment' entry cdr non-nil for macro,
+         ;; nil for macro redefined as function.  `declare' only for macros,
+         ;; not functions
+         (if (or (memq fn bytecomp-simplify-put--known-macros)
+                 (cdr (assq fn byte-compile-macro-environment))
+                 (and (fboundp fn)
+                      (apropos-macrop fn)))
+             (bytecomp-simplify-put-warn-indent fn)
+           ;; not yet defined
+           (add-to-list 'bytecomp-simplify-put--pending-indents fn)))
 
-           ;; `declare' only for macros, not functions
-           (if (apropos-macrop fn)
-               (bytecomp-simplify-put-warn-indent fn))))))
+       (when (and (equal 4 (safe-length form))
+                  (eq 'lisp-indent-function (nth 2 form))
+                  (bytecomp-simplify-warning-enabled-p 'suspicious))
+         (byte-compile-warn "(put ...) unquoted lisp-indent-function probably wrong (being the value of lisp-indent-function not the symbol)"))))
 
-(defadvice byte-compile-defmacro (before bytecomp-simplify activate)
-  "Check for previous encountered (put 'lisp-indent-function)."
+(defun bytecomp-simplify-defmacro (form)
   (when bytecomp-simplify-put--declare-indent-p
     (let ((symbol (cadr form))) ;; macro name
+      (push symbol bytecomp-simplify-put--known-macros)
       (when (memq symbol bytecomp-simplify-put--pending-indents)
         (bytecomp-simplify-put-warn-indent symbol)))))
+(defadvice byte-compile-defmacro (before bytecomp-simplify activate)
+  "Check for previous encountered (put 'lisp-indent-function)."
+  (bytecomp-simplify-defmacro (ad-get-arg 0)))
+(defadvice byte-compile-file-form-defmacro (before bytecomp-simplify activate)
+  "Check for previous encountered (put 'lisp-indent-function)."
+  (bytecomp-simplify-defmacro (ad-get-arg 0)))
 
 
 ;;-----------------------------------------------------------------------------
