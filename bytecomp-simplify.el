@@ -1,10 +1,10 @@
 ;;; bytecomp-simplify.el --- byte compile warnings for simplifications
 
-;; Copyright 2009, 2010 Kevin Ryde
+;; Copyright 2009, 2010, 2011, 2012 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42@zip.com.au>
-;; Version: 12
-;; Keywords: extensions
+;; Version: 13
+;; Keywords: extensions, byte-compile
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
 ;; bytecomp-simplify.el is free software; you can redistribute it and/or
@@ -29,23 +29,25 @@
 ;;
 ;; The reports include
 ;;
-;;     char-before          \
-;;     char-after           | argument `point' can be omitted
-;;     push-mark            /
-;;     delete-windows-on    `current-buffer' can be omitted for Emacs 23 up
-;;     eq nil               can be `null'
-;;     equal 'sym           can be `eq'
-;;     kill-buffer          `current-buffer' can be nil or omitted for Emacs 23
-;;     lisp-indent-function can be `declare' within macro for Emacs 23 up
-;;     princ "\n"           can be `terpri'
-;;     re-search-forward    \ constant pattern can be plain `search-forward'
-;;     re-search-backward   /   or `search-backward'
-;;     search-forward       \
-;;     search-backward      | `point-min' or `point-max' limit can be nil
-;;     re-search-forward    |
-;;     re-search-backward   /
-;;     up-list              \ count==1 can be omitted for Emacs 21 up
-;;     down-list            /
+;;     char-before           \
+;;     char-after            | argument `point' omitted
+;;     push-mark             /
+;;     delete-windows-on     `current-buffer' omitted for Emacs 23 up
+;;     eq nil                can be `null'
+;;     equal 'sym            can be `eq'
+;;     kill-buffer           `current-buffer' nil or omitted for Emacs 23
+;;     lisp-indent-function  `declare' within macro for Emacs 23 up
+;;     princ "\n"            `terpri'
+;;     re-search-forward     \ constant pattern `search-forward'
+;;     re-search-backward    /   or `search-backward'
+;;     search-forward        \
+;;     search-backward       | `point-min' or `point-max' limit nil
+;;     re-search-forward     |
+;;     re-search-backward    /
+;;     switch-to-buffer      to `(other-buffer)' can be nil
+;;     up-list               \ count==1 can be omitted for Emacs 21 up
+;;     down-list             /
+;;     write-region          point-min to point-max can be nil for Emacs 22 up
 ;;
 ;;
 ;; Things like `delete-windows-on' which are version-dependent are reported
@@ -101,6 +103,7 @@
 ;; Version 10 - fix check of "declare indent" availability
 ;; Version 11 - in fixed-match warning show the regexp
 ;; Version 12 - fix for put 'lisp-indent-function on unevaluated toplevels
+;; Version 13 - new switch-to-buffer and write-region
 
 ;;; Code:
 
@@ -117,6 +120,8 @@
 ;;-----------------------------------------------------------------------------
 ;; generic
 
+(put 'bytecomp-simplify-quoted-symbol 'side-effect-free 'error-free)
+(put 'bytecomp-simplify-quoted-symbol 'pure t)
 (defun bytecomp-simplify-quoted-symbol (obj)
   "If OBJ is a list `(quote SYMBOL)' return SYMBOL, otherwise nil."
   (and (consp obj)
@@ -158,6 +163,7 @@
 
 ;;-----------------------------------------------------------------------------
 
+(put  'bytecomp-simplify-warning-enabled-p 'side-effect-free t)
 (defun bytecomp-simplify-warning-enabled-p (&optional warning-type)
   "Return non-nil if simplify warnings are enabled in `byte-compile-warnings'."
   (unless warning-type
@@ -238,7 +244,8 @@ argument expressions."
   (bytecomp-simplify-warn form))
 
 (defun bytecomp-simplify-unload-function ()
-  "Remove defadvices."
+  "Remove defadvices applied by bytecomp-simplify.
+This is called by `unload-feature'."
   (dolist (func '(byte-compile-normal-call
                   byte-compile-defmacro
                   byte-compile-char-before
@@ -357,7 +364,7 @@ argument expressions."
 
 
 ;;-----------------------------------------------------------------------------
-;; princ
+;; princ -- princ "\n" can be terpri
 
 (put 'princ 'bytecomp-simplify-warn
      (lambda (fn form)
@@ -517,6 +524,37 @@ specials in the future."
 (put 'down-list 'bytecomp-simplify-warn 'bytecomp-simplify-updown-list)
 (put 'up-list   'bytecomp-simplify-warn 'bytecomp-simplify-updown-list)
 
+
+;;-----------------------------------------------------------------------------
+;; switch-to-buffer -- nil means (other-buffer)
+;; not actually documented in older Emacs, but goes back at least to Emacs 20
+
+(put 'switch-to-buffer 'bytecomp-simplify-warn
+     (lambda (fn form)
+       (when (equal form '(switch-to-buffer (other-buffer)))
+         (byte-compile-warn "`%S' can be simplified to `(%S nil)" form fn))))
+
+
+;;-----------------------------------------------------------------------------
+;; write-region
+
+(defconst bytecomp-simplify--write-region-nil
+  (condition-case nil
+      (with-temp-buffer
+        (write-region nil nil null-device)
+        t)
+    (error nil))
+  "Non-nil if `write-region' accepts nil for whole buffer in this Emacs.
+`write-region' has this in GNU Emacs 22 and up (and not in XEmacs 21.4).")
+
+(put 'write-region 'bytecomp-simplify-warn
+     (lambda (fn form)
+       (when (and bytecomp-simplify--write-region-nil
+                  (equal (car-safe form) 'write-region)
+                  (equal (car-safe (cdr-safe form)) '(point-min))
+                  (equal (car-safe (cdr-safe (cdr-safe form))) '(point-max)))
+         (byte-compile-warn "`(%S (point-min) (point-max)' can be simplified to `(%S nil nil', for Emacs 22 up"
+                            fn fn))))
 
 ;;-----------------------------------------------------------------------------
 
