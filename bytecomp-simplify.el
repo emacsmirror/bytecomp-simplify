@@ -1,9 +1,9 @@
 ;;; bytecomp-simplify.el --- byte compile warnings for simplifications
 
-;; Copyright 2009, 2010, 2011, 2012, 2013, 2014 Kevin Ryde
+;; Copyright 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2019 Kevin Ryde
 
 ;; Author: Kevin Ryde <user42_kevin@yahoo.com.au>
-;; Version: 18
+;; Version: 19
 ;; Keywords: extensions, byte-compile
 ;; URL: http://user42.tuxfamily.org/bytecomp-simplify/index.html
 
@@ -111,6 +111,7 @@
 ;; Version 16 - new forward-word, backward-word omit count=1 in emacs22
 ;; Version 17 - fix check of write-region doesn't take nil in emacs20
 ;; Version 18 - use `macrop' when available
+;; Version 19 - dolist rather than run-hook-with-args on local variable
 
 ;;; Code:
 
@@ -121,8 +122,9 @@
 (require 'advice)
 
 (eval-when-compile
-  (unless (fboundp 'ignore-errors)
-    (require 'cl))) ;; for `ignore-errors' macro
+  (unless (and (fboundp 'ignore-errors)
+               (fboundp 'dolist))  ;; for emacs20
+    (require 'cl)))
 
 
 ;;-----------------------------------------------------------------------------
@@ -214,9 +216,10 @@ argument expressions."
   (when (bytecomp-simplify-warning-enabled-p)
     (let ((fn (car-safe form)))
       (when (symbolp fn)
+        ;; `bytecomp-simplify-warn' property is func or list of functions
         (let ((handler (get fn 'bytecomp-simplify-warn)))
-          ;; func or list of functions
-          (run-hook-with-args 'handler fn form))))))
+          (dolist (func (if (functionp handler) (list handler) handler))
+            (funcall func fn form)))))))
 
 ;;-----------------------------------------------------------------------------
 ;; nasty hook-ins to bytecomp.el
